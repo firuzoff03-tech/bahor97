@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="ru" data-theme="dark">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Бахор-97 · CRM</title>
+<meta name="description" content="Закрытая CRM строительной компании Бахор-97">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<div id="intro" class="intro">
+  <div class="skyline"><i></i><i></i><i></i><i></i></div>
+  <div class="crane"><b></b><span></span><em></em></div>
+  <div class="truck t1"></div><div class="truck t2"></div>
+  <div class="intro-brand"><div class="logo-mark">Б<span>97</span></div><h1>БАХОР-97</h1><p>СТРОИТЕЛЬНАЯ СИСТЕМА УЧЁТА</p><div class="bar"><i></i></div></div>
+</div>
+
+<div class="world" aria-hidden="true">
+  <div class="tower tower-a"></div><div class="tower tower-b"></div><div class="tower tower-c"></div>
+  <div class="bg-crane c1"><i></i><b></b></div><div class="bg-crane c2"><i></i><b></b></div>
+  <div class="dust d1"></div><div class="dust d2"></div><div class="dust d3"></div>
+</div>
+
+<button id="themeBtn" class="theme-float">☼ <span>Светлая тема</span></button>
+
+<main id="loginView" class="login-view hidden">
+  <section class="login-card glass">
+    <div class="brand"><div class="logo-mark small">Б<span>97</span></div><div><b>ЧДММ «БАХОР-97»</b><small>PRIVATE CONSTRUCTION CRM</small></div></div>
+    <div class="eyebrow">ЗАКРЫТАЯ СИСТЕМА</div>
+    <h2>Контроль стройки.<br><em>Без лишнего.</em></h2>
+    <p class="muted">Клиенты, договоры, платежи и контроль задолженности в одном рабочем пространстве.</p>
+    <form id="loginForm">
+      <label>ЛОГИН<input id="loginUser" autocomplete="username" value="developer" required></label>
+      <label>ПАРОЛЬ<input id="loginPass" type="password" autocomplete="current-password" required></label>
+      <button class="primary" type="submit">ВОЙТИ В СИСТЕМУ <span>→</span></button>
+      <div id="loginError" class="error"></div>
+    </form>
+    <div class="secure-note">● Защищённая сессия · вход только по выданному доступу</div>
+  </section>
+</main>
+
+<div id="appView" class="app hidden">
+  <aside class="sidebar glass">
+    <div class="brand side"><div class="logo-mark tiny">Б<span>97</span></div><div><b>БАХОР-97</b><small>CRM</small></div></div>
+    <nav>
+      <button class="nav active" data-view="dashboard">⌂ <span>Обзор</span></button>
+      <button class="nav" data-view="clients">▦ <span>Клиенты</span></button>
+      <button class="nav" id="adminBtn">⚙ <span>Доступы</span></button>
+    </nav>
+    <div class="side-bottom"><div class="user-pill"><span id="userInitial">D</span><div><b id="who">developer</b><small id="roleText">Разработчик</small></div></div><button id="logoutBtn" class="ghost">Выйти</button></div>
+  </aside>
+
+  <section class="workspace">
+    <header class="topbar">
+      <div><div class="eyebrow">БЛОК A · УЧЁТ ДОГОВОРОВ</div><h1>Панель управления</h1><p id="syncText">Синхронизация с Google Таблицей…</p></div>
+      <div class="top-actions"><button id="refreshBtn" class="outline">↻ Обновить</button><div class="live"><i></i> СИСТЕМА ОНЛАЙН</div></div>
+    </header>
+
+    <section class="metrics">
+      <article class="glass"><small>КЛИЕНТЫ</small><strong id="mClients">—</strong><span>договоров в реестре</span></article>
+      <article class="glass"><small>ОБЩАЯ ПЛОЩАДЬ</small><strong id="mArea">—</strong><span>м² по текущей базе</span></article>
+      <article class="glass"><small>ТРЕБУЕТ ВНИМАНИЯ</small><strong id="mAttention">—</strong><span>строк с контрольной отметкой</span></article>
+      <article class="glass"><small>СИНХРОНИЗАЦИЯ</small><strong class="ok">LIVE</strong><span>Google Sheets → CRM</span></article>
+    </section>
+
+    <section class="split">
+      <article class="building-card glass">
+        <div class="section-head"><div><small>ИНТЕРАКТИВНЫЙ ОБЪЕКТ</small><h3>Дом по этажам</h3></div><span>Нажмите этаж для фильтра</span></div>
+        <div id="building" class="building"></div>
+      </article>
+      <article class="logic-card glass">
+        <div class="section-head"><div><small>ЛОГИКА КОНТРОЛЯ</small><h3>Состояние базы</h3></div></div>
+        <div class="logic-grid"><div><i class="dot green"></i><b id="logicClean">—</b><span>без отметок</span></div><div><i class="dot red"></i><b id="logicWarn">—</b><span>проверить</span></div><div><i class="dot gold"></i><b id="logicFloors">—</b><span>этажей</span></div></div>
+        <p>CRM не меняет исходные данные Google Таблицы. Изменения платежей разработчиком хранятся как отдельный слой контроля.</p>
+      </article>
+    </section>
+
+    <section class="clients-card glass">
+      <div class="section-head clients-head"><div><small>РЕЕСТР</small><h3>Клиенты и договоры</h3></div><div class="filters"><input id="search" placeholder="Поиск: ФИО, договор, телефон…"><select id="floorFilter"><option value="">Все этажи</option></select></div></div>
+      <div class="table-wrap"><table><thead><tr><th>Клиент</th><th>Договор</th><th>Этаж</th><th>Площадь</th><th>Стоимость</th><th>Контроль</th></tr></thead><tbody id="clientRows"></tbody></table></div>
+    </section>
+  </section>
+</div>
+
+<div id="drawerOverlay" class="overlay hidden"><aside id="drawer" class="drawer glass"><button class="x" data-close="drawer">×</button><div id="drawerContent"></div></aside></div>
+<div id="paymentOverlay" class="overlay center hidden"><section class="modal glass"><button class="x" data-close="payment">×</button><div class="eyebrow">ПЛАТЁЖ</div><h3 id="paymentTitle">Редактирование</h3><form id="paymentForm"><div class="form-grid"><label>Дата<input id="pDate"></label><label>USD<input id="pUsd"></label><label>Курс<input id="pRate"></label><label>TJS<input id="pTjs"></label><label class="wide">Примечание<input id="pNote"></label><label class="wide">Проверка<input id="pCheck"></label></div><div class="modal-actions"><button type="button" id="deletePay" class="danger">Удалить</button><span></span><button type="button" data-close="payment" class="ghost">Отмена</button><button class="primary compact" type="submit">Сохранить</button></div></form></section></div>
+
+<div id="adminOverlay" class="overlay center hidden"><section class="admin glass"><button class="x" data-close="admin">×</button><div class="eyebrow">ПАНЕЛЬ РАЗРАБОТЧИКА</div><h2>Доступы и действия</h2><div class="tabs"><button class="active" data-tab="users">Доступы</button><button data-tab="activity">История действий</button></div><div id="usersTab"><form id="createUserForm" class="create-user"><label>Логин<input id="newUser" required></label><label>Пароль<input id="newPass" type="password" minlength="8" required></label><label>Роль<select id="newRole"><option value="viewer">Просмотр</option><option value="developer">Разработчик</option></select></label><button class="primary compact">Создать доступ</button></form><div id="adminError" class="error"></div><div id="userList" class="user-list"></div></div><div id="activityTab" class="hidden"><div id="activityList" class="activity-list"></div></div></section></div>
+
+<script src="/app.js"></script>
+</body></html>
