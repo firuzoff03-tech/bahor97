@@ -82,7 +82,13 @@ function requestMeta(c) {
 function sameOrigin(c) {
   const origin=c.req.header("origin");
   if(!origin) return true;
-  try { return origin === new URL(c.req.url).origin; } catch { return false; }
+  try {
+    const o=new URL(origin);
+    const forwardedHost=(c.req.header("x-forwarded-host")||c.req.header("host")||"").split(",")[0].trim();
+    if(forwardedHost && o.host===forwardedHost) return true;
+    const requestUrl=new URL(c.req.url);
+    return o.host===requestUrl.host;
+  } catch { return false; }
 }
 
 async function initDb() {
@@ -133,7 +139,7 @@ app.use("*",async(c,next)=>{
   c.header("Referrer-Policy","no-referrer");
   c.header("Permissions-Policy","camera=(), microphone=(), geolocation=()");
   c.header("Strict-Transport-Security","max-age=31536000; includeSubDomains");
-  c.header("Content-Security-Policy","default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'");
+  c.header("Content-Security-Policy","default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'");
   if(c.req.path.startsWith("/api/")||c.req.path.startsWith("/setup")) c.header("Cache-Control","no-store");
 });
 
