@@ -168,7 +168,7 @@ app.post("/api/setup",c=>c.json({error:"Первичная настройка н
 app.get("/auth/google",c=>c.redirect("/"));
 app.get("/auth/google/callback",c=>c.redirect("/"));
 
-app.post("/api/signin-v2",async c=>{
+app.post("/api/login",async c=>{
   const b=await c.req.json().catch(()=>({}));
   const username=String(b.username||"").trim();
   const password=String(b.password||"");
