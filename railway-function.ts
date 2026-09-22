@@ -1,270 +1,132 @@
 import { Hono } from "hono";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import { Pool } from "pg";
-import { randomBytes, randomUUID, scryptSync, createHash, timingSafeEqual } from "node:crypto";
+import { randomBytes, createHash } from "node:crypto";
 
 const app = new Hono();
-const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 8, idleTimeoutMillis: 30000 });
-const SHEET_ID = process.env.SHEET_ID || "1ij6PAL4NPnLrTBUMgnJLiVlkrZ0-KgFOT6HsdS7VAkE";
-const SESSION_MS = 12 * 60 * 60 * 1000;
-const MAX_FAILS = 8;
-const LOCK_MS = 15 * 60 * 1000;
-const OWNER_GOOGLE_EMAIL = (process.env.OWNER_GOOGLE_EMAIL || "firuzoff03@gmail.com").toLowerCase();
-const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || "";
-const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || "";
-const GOOGLE_REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI || ("https://" + (process.env.RAILWAY_PUBLIC_DOMAIN || "bahor-crm-production.up.railway.app") + "/auth/google/callback");
+const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 6, idleTimeoutMillis: 30000 });
+const SHEET_ID = "1ij6PAL4NPnLrTBUMgnJLiVlkrZ0-KgFOT6HsdS7VAkE";
 const ADMIN_USER = process.env.ADMIN_USER || "Developer";
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "";
+const SESSION_MS = 12 * 60 * 60 * 1000;
 
-const HTML = "<!doctype html>\n<html lang=\"ru\" data-theme=\"dark\">\n<head>\n<meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n<title>Бахор-97 · CRM</title>\n<meta name=\"description\" content=\"Закрытая CRM строительной компании Бахор-97\">\n<link rel=\"stylesheet\" href=\"/styles.css\">\n</head>\n<body>\n<div id=\"intro\" class=\"intro\">\n  <div class=\"skyline\"><i></i><i></i><i></i><i></i></div>\n  <div class=\"crane\"><b></b><span></span><em></em></div>\n  <div class=\"truck t1\"></div><div class=\"truck t2\"></div>\n  <div class=\"intro-brand\"><div class=\"logo-mark\">Б<span>97</span></div><h1>БАХОР-97</h1><p>СТРОИТЕЛЬНАЯ СИСТЕМА УЧЁТА</p><div class=\"bar\"><i></i></div></div>\n</div>\n\n<div class=\"world\" aria-hidden=\"true\">\n  <div class=\"tower tower-a\"></div><div class=\"tower tower-b\"></div><div class=\"tower tower-c\"></div>\n  <div class=\"bg-crane c1\"><i></i><b></b></div><div class=\"bg-crane c2\"><i></i><b></b></div>\n  <div class=\"dust d1\"></div><div class=\"dust d2\"></div><div class=\"dust d3\"></div>\n</div>\n\n<button id=\"themeBtn\" class=\"theme-float\">☼ <span>Светлая тема</span></button>\n\n<main id=\"loginView\" class=\"login-view hidden\">\n  <section class=\"login-card glass\">\n    <div class=\"brand\"><div class=\"logo-mark small\">Б<span>97</span></div><div><b>ЧДММ «БАХОР-97»</b><small>PRIVATE CONSTRUCTION CRM</small></div></div>\n    <div class=\"eyebrow\">ЗАКРЫТАЯ СИСТЕМА</div>\n    <h2>Контроль стройки.<br><em>Без лишнего.</em></h2>\n    <p class=\"muted\">Клиенты, договоры, платежи и контроль задолженности в одном рабочем пространстве.</p>\n    <form id=\"loginForm\">\n      <label>ЛОГИН<input id=\"loginUser\" autocomplete=\"username\" value=\"Developer\" required></label>\n      <label>ПАРОЛЬ<input id=\"loginPass\" type=\"password\" autocomplete=\"current-password\" required></label>\n      <button class=\"primary\" type=\"submit\">ВОЙТИ В СИСТЕМУ <span>→</span></button>\n      <div id=\"loginError\" class=\"error\"></div>\n    </form>\n    <div class=\"secure-note\">● Защищённый вход · Бахор-97</div>\n  </section>\n</main>\n\n<div id=\"appView\" class=\"app hidden\">\n  <aside class=\"sidebar glass\">\n    <div class=\"brand side\"><div class=\"logo-mark tiny\">Б<span>97</span></div><div><b>БАХОР-97</b><small>CRM</small></div></div>\n    <nav>\n      <button class=\"nav active\" data-view=\"dashboard\">⌂ <span>Обзор</span></button>\n      <button class=\"nav\" data-view=\"clients\">▦ <span>Клиенты</span></button>\n      <button class=\"nav\" id=\"adminBtn\">⚙ <span>Доступы</span></button>\n    </nav>\n    <div class=\"side-bottom\"><div class=\"user-pill\"><span id=\"userInitial\">D</span><div><b id=\"who\">developer</b><small id=\"roleText\">Разработчик</small></div></div><button id=\"logoutBtn\" class=\"ghost\">Выйти</button></div>\n  </aside>\n\n  <section class=\"workspace\">\n    <header class=\"topbar\">\n      <div><div class=\"eyebrow\">БЛОК A · УЧЁТ ДОГОВОРОВ</div><h1>Панель управления</h1><p id=\"syncText\">Синхронизация с Google Таблицей…</p></div>\n      <div class=\"top-actions\"><button id=\"refreshBtn\" class=\"outline\">↻ Обновить</button><div class=\"live\"><i></i> СИСТЕМА ОНЛАЙН</div></div>\n    </header>\n\n    <section class=\"metrics\">\n      <article class=\"glass\"><small>КЛИЕНТЫ</small><strong id=\"mClients\">—</strong><span>договоров в реестре</span></article>\n      <article class=\"glass\"><small>ОБЩАЯ ПЛОЩАДЬ</small><strong id=\"mArea\">—</strong><span>м² по текущей базе</span></article>\n      <article class=\"glass\"><small>ТРЕБУЕТ ВНИМАНИЯ</small><strong id=\"mAttention\">—</strong><span>строк с контрольной отметкой</span></article>\n      <article class=\"glass\"><small>СИНХРОНИЗАЦИЯ</small><strong class=\"ok\">LIVE</strong><span>Google Sheets → CRM</span></article>\n    </section>\n\n    <section class=\"split\">\n      <article class=\"building-card glass\">\n        <div class=\"section-head\"><div><small>ИНТЕРАКТИВНЫЙ ОБЪЕКТ</small><h3>Дом по этажам</h3></div><span>Нажмите этаж для фильтра</span></div>\n        <div id=\"building\" class=\"building\"></div>\n      </article>\n      <article class=\"logic-card glass\">\n        <div class=\"section-head\"><div><small>ЛОГИКА КОНТРОЛЯ</small><h3>Состояние базы</h3></div></div>\n        <div class=\"logic-grid\"><div><i class=\"dot green\"></i><b id=\"logicClean\">—</b><span>без отметок</span></div><div><i class=\"dot red\"></i><b id=\"logicWarn\">—</b><span>проверить</span></div><div><i class=\"dot gold\"></i><b id=\"logicFloors\">—</b><span>этажей</span></div></div>\n        <p>CRM не меняет исходные данные Google Таблицы. Изменения платежей разработчиком хранятся как отдельный слой контроля.</p>\n      </article>\n    </section>\n\n    <section class=\"clients-card glass\">\n      <div class=\"section-head clients-head\"><div><small>РЕЕСТР</small><h3>Клиенты и договоры</h3></div><div class=\"filters\"><input id=\"search\" placeholder=\"Поиск: ФИО, договор, телефон…\"><select id=\"floorFilter\"><option value=\"\">Все этажи</option></select></div></div>\n      <div class=\"table-wrap\"><table><thead><tr><th>Клиент</th><th>Договор</th><th>Этаж</th><th>Площадь</th><th>Стоимость</th><th>Контроль</th></tr></thead><tbody id=\"clientRows\"></tbody></table></div>\n    </section>\n  </section>\n</div>\n\n<div id=\"drawerOverlay\" class=\"overlay hidden\"><aside id=\"drawer\" class=\"drawer glass\"><button class=\"x\" data-close=\"drawer\">×</button><div id=\"drawerContent\"></div></aside></div>\n<div id=\"paymentOverlay\" class=\"overlay center hidden\"><section class=\"modal glass\"><button class=\"x\" data-close=\"payment\">×</button><div class=\"eyebrow\">ПЛАТЁЖ</div><h3 id=\"paymentTitle\">Редактирование</h3><form id=\"paymentForm\"><div class=\"form-grid\"><label>Дата<input id=\"pDate\"></label><label>USD<input id=\"pUsd\"></label><label>Курс<input id=\"pRate\"></label><label>TJS<input id=\"pTjs\"></label><label class=\"wide\">Примечание<input id=\"pNote\"></label><label class=\"wide\">Проверка<input id=\"pCheck\"></label></div><div class=\"modal-actions\"><button type=\"button\" id=\"deletePay\" class=\"danger\">Удалить</button><span></span><button type=\"button\" data-close=\"payment\" class=\"ghost\">Отмена</button><button class=\"primary compact\" type=\"submit\">Сохранить</button></div></form></section></div>\n\n<div id=\"adminOverlay\" class=\"overlay center hidden\"><section class=\"admin glass\"><button class=\"x\" data-close=\"admin\">×</button><div class=\"eyebrow\">ПАНЕЛЬ РАЗРАБОТЧИКА</div><h2>Доступы и действия</h2><div class=\"tabs\"><button class=\"active\" data-tab=\"users\">Доступы</button><button data-tab=\"activity\">История действий</button></div><div id=\"usersTab\"><form id=\"createUserForm\" class=\"create-user\"><label>Логин<input id=\"newUser\" required></label><label>Пароль<input id=\"newPass\" type=\"password\" minlength=\"8\" required></label><label>Роль<select id=\"newRole\"><option value=\"viewer\">Просмотр</option><option value=\"developer\">Разработчик</option></select></label><button class=\"primary compact\">Создать доступ</button></form><div id=\"adminError\" class=\"error\"></div><div id=\"userList\" class=\"user-list\"></div></div><div id=\"activityTab\" class=\"hidden\"><div id=\"activityList\" class=\"activity-list\"></div></div></section></div>\n\n<script src=\"/app.js\"></script>\n</body></html>";
-const CSS = ":root{--bg:#071319;--panel:rgba(9,27,35,.78);--panel2:#0d222b;--ink:#eef6f6;--muted:#78919a;--line:rgba(174,205,213,.13);--gold:#d7aa5c;--green:#64c696;--red:#e28273;--shadow:0 30px 80px rgba(0,0,0,.25);color-scheme:dark}\n*{box-sizing:border-box}html,body{margin:0;min-height:100%;font-family:Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,Arial;color:var(--ink);background:var(--bg)}button,input,select{font:inherit}button{cursor:pointer}.hidden{display:none!important}.glass{background:var(--panel);border:1px solid var(--line);box-shadow:var(--shadow);backdrop-filter:blur(24px)}\n.world{position:fixed;inset:0;overflow:hidden;pointer-events:none;background:radial-gradient(circle at 74% 15%,rgba(184,139,67,.15),transparent 28%),linear-gradient(135deg,#061117,#0a2029 52%,#08171e);z-index:0}.tower{position:absolute;bottom:-2%;background:linear-gradient(90deg,#0b2029,#102d39);border:1px solid rgba(173,205,216,.06);box-shadow:0 0 70px rgba(0,0,0,.22)}.tower:before{content:\"\";position:absolute;inset:7% 11%;background:repeating-linear-gradient(0deg,transparent 0 38px,rgba(205,181,127,.07) 39px 41px),repeating-linear-gradient(90deg,transparent 0 48px,rgba(205,181,127,.06) 49px 51px)}.tower-a{right:8%;width:19%;height:48%}.tower-b{right:29%;width:13%;height:31%}.tower-c{left:7%;width:17%;height:22%}.bg-crane{position:absolute;bottom:11%;width:300px;height:56%;opacity:.24}.bg-crane i{position:absolute;left:76px;bottom:0;width:7px;height:100%;background:var(--gold)}.bg-crane b{position:absolute;top:17px;left:0;width:290px;height:5px;background:var(--gold)}.bg-crane.c1{right:20%}.bg-crane.c2{left:16%;transform:scale(.72)}.dust{position:absolute;border-radius:50%;filter:blur(2px);background:rgba(213,175,108,.1);animation:float 9s ease-in-out infinite}.d1{width:5px;height:5px;left:15%;top:22%}.d2{width:8px;height:8px;left:64%;top:33%;animation-delay:-3s}.d3{width:4px;height:4px;left:83%;top:18%;animation-delay:-5s}@keyframes float{50%{transform:translate(30px,-35px);opacity:.25}}\n.intro{position:fixed;inset:0;z-index:200;background:linear-gradient(135deg,#061117,#0c2934 58%,#07151c);display:grid;place-items:center;overflow:hidden;animation:introAway .7s ease 2.25s forwards}.intro-brand{text-align:center;z-index:3;animation:introBrand 2.2s ease both}.logo-mark{width:74px;height:74px;margin:auto;border:1px solid rgba(215,170,92,.55);border-radius:22px;display:grid;place-items:center;font-size:32px;font-weight:900;letter-spacing:-.08em;color:var(--gold);box-shadow:inset 0 0 30px rgba(215,170,92,.08)}.logo-mark span{font-size:13px;margin-left:2px;letter-spacing:0}.logo-mark.small{width:48px;height:48px;border-radius:14px;font-size:20px;margin:0}.logo-mark.small span{font-size:9px}.logo-mark.tiny{width:39px;height:39px;border-radius:12px;font-size:17px;margin:0}.logo-mark.tiny span{font-size:7px}.intro h1{font-size:24px;letter-spacing:.25em;margin:24px 0 6px}.intro p{font-size:8px;letter-spacing:.27em;color:#78929b}.bar{width:230px;height:2px;margin:20px auto;background:rgba(255,255,255,.08);overflow:hidden}.bar i{display:block;height:100%;background:var(--gold);transform-origin:left;animation:load 2s ease both}.truck{position:absolute;bottom:8%;width:95px;height:29px;border-radius:4px;background:#9b7b44}.truck:before{content:\"\";position:absolute;right:-30px;bottom:0;width:34px;height:22px;background:#b18b4a;clip-path:polygon(0 34%,70% 34%,100% 100%,0 100%)}.truck:after{content:\"\";position:absolute;left:12px;bottom:-8px;width:16px;height:16px;border-radius:50%;background:#061117;box-shadow:61px 0 #061117}.t1{left:9%;animation:truckRight 2.1s ease-in forwards}.t2{right:8%;transform:scaleX(-1);animation:truckLeft 2.1s ease-in forwards}.crane{position:absolute;right:19%;bottom:9%;width:320px;height:62%;opacity:.4}.crane b{position:absolute;left:82px;bottom:0;width:8px;height:100%;background:#ad8849}.crane span{position:absolute;left:0;top:16px;width:310px;height:6px;background:#c99b52}.crane em{position:absolute;top:20px;right:22px;width:2px;height:110px;background:#c99b52}@keyframes load{from{transform:scaleX(0)}to{transform:scaleX(1)}}@keyframes introBrand{0%{opacity:0;transform:scale(.9)}20%,78%{opacity:1;transform:none}100%{opacity:.25;transform:scale(1.03)}}@keyframes introAway{to{opacity:0;visibility:hidden}}@keyframes truckRight{70%{transform:translateX(58vw)}100%{transform:translateX(120vw)}}@keyframes truckLeft{70%{transform:scaleX(-1) translateX(58vw)}100%{transform:scaleX(-1) translateX(120vw)}}\n.theme-float{position:fixed;z-index:120;right:22px;top:20px;padding:10px 13px;border:1px solid var(--line);border-radius:12px;background:rgba(11,31,40,.72);color:var(--ink);backdrop-filter:blur(16px);font-size:11px}\n.login-view{position:relative;z-index:5;min-height:100vh;display:flex;align-items:center;padding:40px 8vw}.login-card{width:min(500px,100%);padding:34px;border-radius:28px}.brand{display:flex;align-items:center;gap:13px}.brand b,.brand small{display:block}.brand b{font-size:12px;letter-spacing:.12em}.brand small{margin-top:4px;font-size:7px;letter-spacing:.16em;color:var(--muted)}.eyebrow{margin-top:34px;color:var(--gold);font-size:8px;letter-spacing:.22em;font-weight:900}.login-card h2{font-size:44px;line-height:1.02;margin:10px 0 14px;letter-spacing:-.04em}.login-card h2 em{font-style:normal;color:var(--gold)}.muted{color:var(--muted);font-size:12px;line-height:1.7}.login-card form{margin-top:28px;display:grid;gap:13px}.login-card label,.create-user label,.form-grid label{font-size:8px;letter-spacing:.12em;color:var(--muted)}input,select{width:100%;margin-top:7px;padding:13px 14px;border:1px solid var(--line);border-radius:11px;background:rgba(3,14,19,.48);color:var(--ink);outline:none}input:focus,select:focus{border-color:rgba(215,170,92,.45);box-shadow:0 0 0 3px rgba(215,170,92,.07)}.primary{border:0;border-radius:12px;padding:14px 16px;background:var(--gold);color:#132028;font-size:10px;font-weight:900;letter-spacing:.08em}.google-login{display:flex;justify-content:space-between;align-items:center;text-decoration:none;margin-top:24px}.primary span{float:right}.primary.compact{padding:10px 13px}.error{min-height:14px;color:#ef9a8b;font-size:10px}.secure-note{border-top:1px solid var(--line);padding-top:17px;margin-top:8px;color:#718890;font-size:9px}\n.app{position:relative;z-index:5;min-height:100vh}.sidebar{position:fixed;z-index:30;left:0;top:0;bottom:0;width:220px;padding:22px 16px;display:flex;flex-direction:column;border-radius:0;border-top:0;border-left:0;border-bottom:0}.brand.side{padding:0 4px}.sidebar nav{display:grid;gap:7px;margin-top:50px}.nav{display:flex;gap:12px;align-items:center;border:0;border-radius:11px;padding:11px 12px;background:transparent;color:var(--muted);font-size:11px;text-align:left}.nav.active,.nav:hover{background:rgba(215,170,92,.08);color:var(--gold)}.side-bottom{margin-top:auto}.user-pill{display:flex;align-items:center;gap:10px;padding:11px 6px}.user-pill>span{width:34px;height:34px;border-radius:10px;background:#173642;display:grid;place-items:center;font-size:10px;font-weight:900}.user-pill b,.user-pill small{display:block}.user-pill b{font-size:10px}.user-pill small{margin-top:3px;font-size:8px;color:var(--muted)}.ghost,.outline{border:1px solid var(--line);background:rgba(255,255,255,.025);color:var(--ink);border-radius:10px;padding:9px 12px;font-size:10px}.side-bottom .ghost{width:100%;margin-top:8px}\n.workspace{margin-left:220px;padding:34px 38px 60px;max-width:1700px}.topbar{display:flex;justify-content:space-between;gap:24px;align-items:end}.topbar .eyebrow{margin:0}.topbar h1{font-size:32px;margin:7px 0 7px;letter-spacing:-.035em}.topbar p{margin:0;color:var(--muted);font-size:10px}.top-actions{display:flex;align-items:center;gap:10px}.live{font-size:8px;letter-spacing:.12em;color:var(--green);padding:10px 12px;border:1px solid rgba(100,198,150,.15);border-radius:10px;background:rgba(100,198,150,.04)}.live i{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--green);box-shadow:0 0 10px var(--green);margin-right:6px}\n.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:27px 0}.metrics article{padding:20px;border-radius:17px;min-height:130px}.metrics small{font-size:8px;color:var(--muted);letter-spacing:.12em}.metrics strong{display:block;font-size:29px;margin:18px 0 8px;letter-spacing:-.04em}.metrics strong.ok{color:var(--green)}.metrics span{font-size:9px;color:var(--muted)}\n.split{display:grid;grid-template-columns:1.35fr .8fr;gap:12px;margin-bottom:12px}.building-card,.logic-card,.clients-card{border-radius:20px;overflow:hidden}.building-card,.logic-card{padding:20px}.section-head{display:flex;justify-content:space-between;align-items:end;gap:15px}.section-head small{font-size:7px;color:var(--gold);letter-spacing:.16em}.section-head h3{margin:5px 0 0;font-size:16px}.section-head>span{font-size:8px;color:var(--muted)}.building{margin-top:18px;display:grid;gap:6px}.floor{display:grid;grid-template-columns:58px 1fr;gap:8px;align-items:center}.floor>button{border:1px solid var(--line);background:rgba(255,255,255,.02);color:var(--muted);padding:9px 8px;border-radius:9px;font-size:8px}.floor>button:hover{color:var(--gold);border-color:rgba(215,170,92,.25)}.units{display:flex;gap:5px;min-height:33px}.unit{flex:1;min-width:18px;border-radius:5px;background:linear-gradient(180deg,rgba(215,170,92,.18),rgba(215,170,92,.05));border:1px solid rgba(215,170,92,.13);position:relative;overflow:hidden}.unit:after{content:\"\";position:absolute;inset:5px;background:linear-gradient(90deg,transparent 46%,rgba(255,255,255,.07) 47% 53%,transparent 54%)}.logic-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;margin:25px 0 18px}.logic-grid>div{padding:14px 10px;border:1px solid var(--line);border-radius:12px;background:rgba(255,255,255,.018)}.logic-grid b,.logic-grid span{display:block}.logic-grid b{font-size:19px;margin:7px 0}.logic-grid span{font-size:8px;color:var(--muted)}.dot{display:block;width:6px;height:6px;border-radius:50%}.dot.green{background:var(--green)}.dot.red{background:var(--red)}.dot.gold{background:var(--gold)}.logic-card p{color:var(--muted);font-size:9px;line-height:1.6;margin:0}\n.clients-head{padding:20px 20px 14px}.filters{display:flex;gap:8px}.filters input,.filters select{margin:0;padding:10px 12px;font-size:10px}.filters input{width:290px}.filters select{width:120px}.table-wrap{overflow:auto}table{width:100%;border-collapse:collapse;min-width:850px}th{padding:11px 18px;text-align:left;color:#6f8790;font-size:7px;letter-spacing:.14em;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}td{padding:14px 18px;border-bottom:1px solid rgba(181,211,221,.07);font-size:10px;color:#a9bcc3}tbody tr{cursor:pointer}tbody tr:hover{background:rgba(215,170,92,.035)}.client-main{display:flex;gap:10px;align-items:center;min-width:250px}.avatar{width:34px;height:34px;border-radius:10px;background:#163440;color:#b8cdd4;display:grid;place-items:center;font-weight:900}.client-main b,.client-main small{display:block}.client-main b{font-size:10px;color:var(--ink)}.client-main small{margin-top:4px;color:var(--muted);font-size:8px}.badge{display:inline-block;border-radius:99px;padding:5px 8px;font-size:8px;font-weight:900;background:rgba(100,198,150,.08);color:var(--green)}.badge.warn{background:rgba(226,130,115,.08);color:var(--red)}\n.overlay{position:fixed;z-index:100;inset:0;background:rgba(0,0,0,.58);backdrop-filter:blur(8px);display:flex;justify-content:flex-end}.overlay.center{justify-content:center;align-items:center;padding:20px}.drawer{width:min(620px,95vw);height:100%;overflow:auto;border-radius:0;padding:28px;position:relative}.x{position:absolute;right:18px;top:17px;width:34px;height:34px;border:1px solid var(--line);border-radius:50%;background:transparent;color:var(--ink);font-size:20px}.drawer h2{font-size:24px;margin:6px 0}.drawer-sub{color:var(--muted);font-size:9px}.info-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:23px}.info-grid div{padding:12px;border:1px solid var(--line);border-radius:11px;background:rgba(255,255,255,.015)}.info-grid small,.info-grid b{display:block}.info-grid small{font-size:7px;color:var(--muted);text-transform:uppercase}.info-grid b{font-size:10px;margin-top:6px;overflow-wrap:anywhere}.pay-head{display:flex;align-items:center;justify-content:space-between;margin:26px 0 9px}.pay-head h3{margin:0;font-size:14px}.payments{display:grid;gap:7px}.pay{display:grid;grid-template-columns:1.2fr .8fr .8fr auto;gap:8px;align-items:center;padding:12px;border:1px solid var(--line);border-radius:11px;background:rgba(255,255,255,.015)}.pay b,.pay small{display:block}.pay b{font-size:10px}.pay small{font-size:8px;color:var(--muted);margin-top:3px}.pay button{border:1px solid var(--line);background:transparent;color:var(--muted);border-radius:8px;padding:7px;font-size:8px}.empty{padding:25px;text-align:center;color:var(--muted);font-size:9px;border:1px dashed var(--line);border-radius:12px}\n.modal{width:min(540px,96vw);padding:24px;border-radius:20px;position:relative}.modal h3{margin:7px 0 0}.modal .eyebrow,.admin .eyebrow{margin-top:0}.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:22px 0}.form-grid .wide{grid-column:1/-1}.modal-actions{display:grid;grid-template-columns:auto 1fr auto auto;gap:8px;align-items:center}.danger{border:1px solid rgba(226,130,115,.25);background:rgba(226,130,115,.06);color:var(--red);padding:9px 11px;border-radius:9px;font-size:9px}\n.admin{width:min(980px,97vw);max-height:90vh;overflow:auto;border-radius:22px;padding:25px;position:relative}.admin h2{margin:6px 0 15px}.tabs{display:flex;gap:6px;border-bottom:1px solid var(--line);padding-bottom:10px}.tabs button{border:0;background:transparent;color:var(--muted);padding:8px 10px;border-radius:8px;font-size:9px}.tabs button.active{background:rgba(215,170,92,.09);color:var(--gold)}.create-user{display:grid;grid-template-columns:1fr 1fr 160px 150px;gap:8px;align-items:end;margin:18px 0}.user-list,.activity-list{display:grid;gap:7px}.user-row,.activity-row{display:grid;grid-template-columns:42px 1fr 1fr auto;gap:10px;align-items:center;padding:11px;border:1px solid var(--line);border-radius:11px;background:rgba(255,255,255,.014)}.user-row .avatar{width:34px;height:34px}.user-row b,.user-row small,.activity-row b,.activity-row small{display:block}.user-row b,.activity-row b{font-size:10px}.user-row small,.activity-row small{font-size:8px;color:var(--muted);margin-top:3px}.activity-row{grid-template-columns:1fr 1fr}.activity-row code{font-size:8px;color:var(--gold)}.toggle-access{border:1px solid var(--line);background:transparent;color:var(--ink);border-radius:8px;padding:7px 9px;font-size:8px}\nhtml[data-theme=\"light\"]{--bg:#edf3f3;--panel:rgba(255,255,255,.82);--panel2:#fff;--ink:#18323b;--muted:#6a7e85;--line:rgba(25,57,68,.13);--gold:#a97d34;color-scheme:light}html[data-theme=\"light\"] .world{background:radial-gradient(circle at 70% 15%,rgba(183,151,92,.18),transparent 31%),linear-gradient(135deg,#e8f0f0,#f8f7f2 52%,#e6eeee)}html[data-theme=\"light\"] input,html[data-theme=\"light\"] select,html[data-theme=\"light\"] .theme-float{background:rgba(255,255,255,.86);color:var(--ink)}\n@media(max-width:1100px){.metrics{grid-template-columns:1fr 1fr}.split{grid-template-columns:1fr}.sidebar{width:76px;padding:20px 11px}.sidebar .brand.side>div:last-child,.sidebar .nav span,.user-pill div,.side-bottom .ghost{display:none}.workspace{margin-left:76px;padding:28px 20px}.user-pill{justify-content:center}}\n@media(max-width:720px){.theme-float span{display:none}.login-view{padding:18px;align-items:flex-end}.login-card{padding:25px}.login-card h2{font-size:36px}.sidebar{left:0;right:0;top:auto;width:auto;height:65px;flex-direction:row;align-items:center;border-right:0;border-top:1px solid var(--line);padding:8px 12px}.sidebar .brand.side,.side-bottom{display:none}.sidebar nav{margin:0;width:100%;display:flex;justify-content:space-around}.nav{padding:10px 13px}.workspace{margin-left:0;padding:22px 13px 85px}.topbar{display:block}.top-actions{margin-top:14px}.metrics{gap:8px}.metrics article{padding:15px;min-height:112px}.metrics strong{font-size:23px}.clients-head{display:block}.filters{margin-top:13px}.filters input{width:100%}.filters select{width:110px}.info-grid{grid-template-columns:1fr}.pay{grid-template-columns:1fr 1fr}.create-user{grid-template-columns:1fr}.user-row{grid-template-columns:40px 1fr auto}.user-row>div:nth-child(3){grid-column:2}.admin{padding:18px}.crane{right:-15%;opacity:.25}}\n@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}";
-const JS = "const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];\nlet session=null,clients=[],activeClient=null,activeDetail=null,editing=null;\nconst esc=s=>String(s??\"\").replace(/[&<>\"']/g,c=>({\"&\":\"&amp;\",\"<\":\"&lt;\",\">\":\"&gt;\",\"\\\"\":\"&quot;\",\"'\":\"&#039;\"}[c]));\nconst fmt=n=>{const x=Number(String(n??\"\").replace(/\\s/g,\"\").replace(\",\",\".\"));return Number.isFinite(x)?new Intl.NumberFormat(\"ru-RU\",{maximumFractionDigits:1}).format(x):\"—\"};\nasync function api(url,opt={}){const r=await fetch(url,{headers:{\"Content-Type\":\"application/json\",...(opt.headers||{})},...opt});const data=await r.json().catch(()=>({}));if(r.status===401){showLogin();throw new Error(\"auth\")}if(!r.ok)throw new Error(data.error||\"Ошибка\");return data}\nfunction setTheme(t){document.documentElement.dataset.theme=t;localStorage.setItem(\"b97-theme\",t);$(\"#themeBtn\").innerHTML=(t===\"dark\"?'☼ <span>Светлая тема</span>':'☾ <span>Тёмная тема</span>')}\nsetTheme(localStorage.getItem(\"b97-theme\")||\"dark\");$(\"#themeBtn\").onclick=()=>setTheme(document.documentElement.dataset.theme===\"dark\"?\"light\":\"dark\");\nsetTimeout(()=>{if(!session)$(\"#loginView\").classList.remove(\"hidden\")},2300);\nasync function boot(){try{session=await api(\"/api/session\");showApp();await loadClients()}catch{$(\"#loginView\").classList.remove(\"hidden\")}}\nfunction showLogin(){session=null;$(\"#appView\").classList.add(\"hidden\");$(\"#loginView\").classList.remove(\"hidden\")}\nfunction showApp(){$(\"#loginView\").classList.add(\"hidden\");$(\"#appView\").classList.remove(\"hidden\");$(\"#who\").textContent=session.username;$(\"#userInitial\").textContent=session.username[0].toUpperCase();$(\"#roleText\").textContent=session.role===\"developer\"?\"Разработчик\":\"Просмотр\";$(\"#adminBtn\").style.display=session.role===\"developer\"?\"flex\":\"none\"}\n$(\"#loginForm\").onsubmit=async e=>{e.preventDefault();$(\"#loginError\").textContent=\"\";try{session=await api(\"/api/login\",{method:\"POST\",body:JSON.stringify({username:$(\"#loginUser\").value,password:$(\"#loginPass\").value})});showApp();await loadClients()}catch(err){$(\"#loginError\").textContent=err.message}};\n$(\"#logoutBtn\").onclick=async()=>{try{await api(\"/api/logout\",{method:\"POST\"})}catch{}showLogin()};\n$(\"#refreshBtn\").onclick=loadClients;\nfunction statusWarn(c){return /провер|долг|вним|ошиб|нет|-/i.test(String(c.status||\"\"))&&String(c.status||\"\").trim()!==\"\"}\nasync function loadClients(){try{const d=await api(\"/api/clients\");clients=d.clients;$(\"#syncText\").textContent=\"Синхронизировано: \"+new Date(d.syncedAt).toLocaleString(\"ru-RU\");renderDashboard();renderClients()}catch(e){$(\"#syncText\").textContent=e.message}}\nfunction renderDashboard(){\n  $(\"#mClients\").textContent=clients.length;\n  $(\"#mArea\").textContent=fmt(clients.reduce((s,c)=>s+(Number(String(c.area).replace(\",\",\".\"))||0),0));\n  const warn=clients.filter(statusWarn).length;$(\"#mAttention\").textContent=warn;$(\"#logicWarn\").textContent=warn;$(\"#logicClean\").textContent=Math.max(0,clients.length-warn);\n  const floors=[...new Set(clients.map(c=>String(c.floor).trim()).filter(Boolean))].sort((a,b)=>(Number(b)||0)-(Number(a)||0));$(\"#logicFloors\").textContent=floors.length;\n  $(\"#floorFilter\").innerHTML='<option value=\"\">Все этажи</option>'+floors.map(f=>'<option>'+esc(f)+'</option>').join(\"\");\n  const numeric=[...new Set(floors.filter(x=>/^\\d+$/.test(x)).map(Number))].sort((a,b)=>b-a);\n  $(\"#building\").innerHTML=(numeric.length?numeric:[8,7,6,5,4,3,2,1]).map(f=>{const count=clients.filter(c=>String(c.floor).trim()===String(f)).length;return '<div class=\"floor\"><button data-floor=\"'+esc(f)+'\">'+f+' ЭТАЖ · '+count+'</button><div class=\"units\">'+Array.from({length:Math.max(1,Math.min(count,8))},()=>'<i class=\"unit\"></i>').join(\"\")+'</div></div>'}).join(\"\");\n  $$(\"#building [data-floor]\").forEach(b=>b.onclick=()=>{$(\"#floorFilter\").value=b.dataset.floor;renderClients();$(\"#search\").scrollIntoView({behavior:\"smooth\",block:\"center\"})});\n}\nfunction renderClients(){\n  const q=$(\"#search\").value.toLowerCase().trim(),floor=$(\"#floorFilter\").value;\n  const rows=clients.filter(c=>(!floor||String(c.floor).trim()===floor)&&(!q||[c.name,c.contract,c.phone,c.rma].join(\" \").toLowerCase().includes(q)));\n  $(\"#clientRows\").innerHTML=rows.map(c=>'<tr data-num=\"'+esc(c.num)+'\"><td><div class=\"client-main\"><span class=\"avatar\">'+esc((c.name||\"?\")[0])+'</span><div><b>'+esc(c.name||\"Без имени\")+'</b><small>'+esc(c.phone||\"Телефон не указан\")+'</small></div></div></td><td>'+esc(c.contract||\"—\")+'</td><td>'+esc(c.floor||\"—\")+'</td><td>'+esc(c.area||\"—\")+' м²</td><td>'+esc(c.total||\"—\")+' '+esc(c.currency||\"\")+'</td><td><span class=\"badge '+(statusWarn(c)?\"warn\":\"\")+'\">'+esc(c.status||\"Внесено\")+'</span></td></tr>').join(\"\");\n  $$(\"#clientRows tr\").forEach(r=>r.onclick=()=>openClient(r.dataset.num));\n}\n$(\"#search\").oninput=renderClients;$(\"#floorFilter\").onchange=renderClients;\nasync function openClient(num){\n  activeClient=clients.find(c=>String(c.num)===String(num));if(!activeClient)return;\n  $(\"#drawerOverlay\").classList.remove(\"hidden\");$(\"#drawerContent\").innerHTML='<div class=\"empty\">Загрузка карточки…</div>';\n  try{activeDetail=await api(\"/api/client/\"+encodeURIComponent(num));renderDrawer()}catch(e){$(\"#drawerContent\").innerHTML='<div class=\"empty\">'+esc(e.message)+'</div>'}\n}\nfunction renderDrawer(){\n  const c=activeClient,d=activeDetail,info=[[\"ФИО\",c.name],[\"Договор\",c.contract],[\"Этаж\",c.floor],[\"Площадь\",c.area?c.area+\" м²\":\"\"],[\"Цена / м²\",c.price],[\"Стоимость\",c.total],[\"Паспорт\",c.passport],[\"РМА / ИНН\",c.rma],[\"Телефон\",c.phone],...d.info.map(x=>[x.label,x.value])];\n  $(\"#drawerContent\").innerHTML='<div class=\"eyebrow\">КАРТОЧКА КЛИЕНТА · №'+esc(c.num)+'</div><h2>'+esc(c.name)+'</h2><div class=\"drawer-sub\">'+esc(c.contract)+' · '+esc(d.sheet)+'</div><div class=\"info-grid\">'+info.filter(x=>x[1]).map(x=>'<div><small>'+esc(x[0])+'</small><b>'+esc(x[1])+'</b></div>').join(\"\")+'</div>'+(d.control?.length?'<div class=\"info-grid\">'+d.control.map(x=>'<div><small>'+esc(x.label)+'</small><b>'+esc(x.value)+'</b></div>').join(\"\")+'</div>':'')+'<div class=\"pay-head\"><h3>История платежей</h3>'+(session.role===\"developer\"?'<button id=\"addPay\" class=\"outline\">+ Добавить</button>':'')+'</div><div class=\"payments\">'+(d.payments.length?d.payments.map(p=>'<div class=\"pay\"><div><b>'+esc(p.date||\"Без даты\")+'</b><small>'+esc(p.note||\"\")+'</small></div><div><b>'+esc(p.usd||\"—\")+' USD</b><small>Курс: '+esc(p.rate||\"—\")+'</small></div><div><b>'+esc(p.tjs||\"—\")+' TJS</b><small>'+esc(p.check||\"\")+'</small></div>'+(session.role===\"developer\"?'<button data-pay=\"'+esc(p.id)+'\">Изменить</button>':'')+'</div>').join(\"\"):'<div class=\"empty\">Платежи в этой карточке пока не заполнены</div>')+'</div>';\n  if(session.role===\"developer\"){$(\"#addPay\").onclick=()=>editPayment(null);$$(\"[data-pay]\").forEach(b=>b.onclick=()=>editPayment(d.payments.find(p=>p.id===b.dataset.pay)))}\n}\nfunction editPayment(p){editing=p||{id:\"\",date:\"\",usd:\"\",rate:\"\",tjs:\"\",note:\"\",check:\"\"};$(\"#paymentTitle\").textContent=p?\"Редактирование платежа\":\"Новый платёж\";$(\"#pDate\").value=editing.date||\"\";$(\"#pUsd\").value=editing.usd||\"\";$(\"#pRate\").value=editing.rate||\"\";$(\"#pTjs\").value=editing.tjs||\"\";$(\"#pNote\").value=editing.note||\"\";$(\"#pCheck\").value=editing.check||\"\";$(\"#deletePay\").style.visibility=p?\"visible\":\"hidden\";$(\"#paymentOverlay\").classList.remove(\"hidden\")}\n$(\"#paymentForm\").onsubmit=async e=>{e.preventDefault();await savePayment(false)};\n$(\"#deletePay\").onclick=()=>savePayment(true);\nasync function savePayment(deleted){try{await api(\"/api/payments\",{method:\"POST\",body:JSON.stringify({clientNum:activeClient.num,id:editing.id||undefined,date:$(\"#pDate\").value,usd:$(\"#pUsd\").value,rate:$(\"#pRate\").value,tjs:$(\"#pTjs\").value,note:$(\"#pNote\").value,check:$(\"#pCheck\").value,deleted})});$(\"#paymentOverlay\").classList.add(\"hidden\");activeDetail=await api(\"/api/client/\"+activeClient.num);renderDrawer()}catch(e){alert(e.message)}}\n$$(\"[data-close]\").forEach(b=>b.onclick=()=>$(\"#\"+b.dataset.close+\"Overlay\").classList.add(\"hidden\"));$(\"#drawerOverlay\").onclick=e=>{if(e.target===$(\"#drawerOverlay\"))$(\"#drawerOverlay\").classList.add(\"hidden\")};\n$(\"#adminBtn\").onclick=()=>{openAdmin();$(\"#adminOverlay\").classList.remove(\"hidden\")};\n$$(\".tabs button\").forEach(b=>b.onclick=()=>{$$(\".tabs button\").forEach(x=>x.classList.remove(\"active\"));b.classList.add(\"active\");$(\"#usersTab\").classList.toggle(\"hidden\",b.dataset.tab!==\"users\");$(\"#activityTab\").classList.toggle(\"hidden\",b.dataset.tab!==\"activity\");if(b.dataset.tab===\"activity\")loadActivity()});\nasync function openAdmin(){try{const d=await api(\"/api/admin/users\");$(\"#userList\").innerHTML=d.users.map(u=>'<div class=\"user-row\"><span class=\"avatar\">'+esc(u.username[0].toUpperCase())+'</span><div><b>'+esc(u.username)+'</b><small>'+(u.role===\"developer\"?\"Разработчик\":\"Только просмотр\")+'</small></div><div><b>'+(u.lastSeen?new Date(u.lastSeen).toLocaleString(\"ru-RU\"):\"Не в сети\")+'</b><small>'+(u.active?\"Доступ активен\":\"Отключён\")+'</small></div>'+(u.protected?'<span class=\"badge\">основной</span>':'<button class=\"toggle-access\" data-user=\"'+esc(u.username)+'\" data-active=\"'+(!u.active)+'\">'+(u.active?\"Отключить\":\"Включить\")+'</button>')+'</div>').join(\"\");$$(\"[data-user]\").forEach(b=>b.onclick=async()=>{await api(\"/api/admin/users/\"+encodeURIComponent(b.dataset.user),{method:\"PATCH\",body:JSON.stringify({active:b.dataset.active===\"true\"})});openAdmin()})}catch(e){$(\"#adminError\").textContent=e.message}}\n$(\"#createUserForm\").onsubmit=async e=>{e.preventDefault();$(\"#adminError\").textContent=\"\";try{await api(\"/api/admin/users\",{method:\"POST\",body:JSON.stringify({username:$(\"#newUser\").value,password:$(\"#newPass\").value,role:$(\"#newRole\").value})});e.target.reset();openAdmin()}catch(err){$(\"#adminError\").textContent=err.message}};\nasync function loadActivity(){try{const d=await api(\"/api/admin/activity\");$(\"#activityList\").innerHTML=d.activity.map(a=>'<div class=\"activity-row\"><div><b>'+esc(a.username)+' · '+esc(a.action)+'</b><small>'+esc(a.detail||\"\")+'</small></div><div><code>'+new Date(a.at).toLocaleString(\"ru-RU\")+'</code><small>'+esc(a.ua||\"\")+'</small></div></div>').join(\"\")||'<div class=\"empty\">История пока пустая</div>'}catch(e){$(\"#activityList\").innerHTML='<div class=\"empty\">'+esc(e.message)+'</div>'}}\nboot();";
+const sha = (v:string) => createHash("sha256").update(v).digest("hex");
 
-const clientSheets = {
-"1":"Кодиров_М5-130-1-А","2":"Насриддинов_М3-85,6ММ-1-А","3":"Ойназаров_М1-130-1-А","4":"Абдузамонов_А1-130","5":"Насриддинов_М2-130-1-А","6":"Хочаева_69-3-А","7":"Рабиева_85-3","8":"Талбакова_71-3-А","9":"Зиёева_97А","10":"Ниёзов_74А","11":"Ибодова_Б-Б-4-69","12":"Душанов_46А","13":"Муродова_37А","14":"Тагоев_75А","15":"Холова_6А","16":"Шоназриев_32А","17":"Фирузаи_5А","18":"Искандарова_5Э-69мм-А","19":"Турсунова_42А","20":"Чалилова_41А","21":"Хафизов_5С","22":"Сафаров_6-А-55,6","23":"Назриева_129-6-А(Е)","24":"Завурова_20А","25":"Файзов_43А","26":"Хайдарова_7Э-57ММ-А","27":"Муродов_15","28":"Ёдгоров_55,6-7-А","29":"Назров_7Э-82ММ-А","30":"Чурабоев_13С","31":"Сафаров_27Б","32":"Салихов_82А","33":"Садриддинзода_72-8-А","34":"Алиев_129-8-А(Е)","35":"Аброров_1-Х-А 8-55,6"
-};
-
-const sha = (v) => createHash("sha256").update(String(v)).digest("hex");
-function hashPassword(password, salt=randomBytes(16).toString("hex")) {
-  return { salt, hash: scryptSync(password, salt, 64).toString("hex") };
+async function initDb(){
+  await pool.query("CREATE TABLE IF NOT EXISTS b97v2_sessions(token_hash TEXT PRIMARY KEY, username TEXT NOT NULL, expires_at BIGINT NOT NULL, created_at BIGINT NOT NULL)");
+  await pool.query("DELETE FROM b97v2_sessions WHERE expires_at < $1",[Date.now()]);
+  console.log("BAHOR97_V2_READY");
 }
-function verifyPassword(password, user) {
-  try {
-    const got=scryptSync(password,user.salt,64), want=Buffer.from(user.hash,"hex");
-    return got.length===want.length && timingSafeEqual(got,want);
-  } catch { return false; }
-}
-function parseCsv(text) {
-  const rows=[]; let row=[],cell="",quoted=false;
-  for (let i=0;i<text.length;i++) {
-    const ch=text[i], n=text[i+1];
-    if (ch === '"' && quoted && n === '"') { cell += '"'; i++; continue; }
-    if (ch === '"') { quoted=!quoted; continue; }
-    if (ch === "," && !quoted) { row.push(cell); cell=""; continue; }
-    if ((ch === "\n" || ch === "\r") && !quoted) {
-      if (ch === "\r" && n === "\n") i++;
-      row.push(cell); cell="";
-      if (row.some(v=>v!=="")) rows.push(row);
-      row=[]; continue;
+await initDb();
+
+function csvParse(text:string){
+  const rows:string[][]=[]; let row:string[]=[]; let cell=""; let q=false;
+  for(let i=0;i<text.length;i++){
+    const c=text[i], n=text[i+1];
+    if(q){
+      if(c==='"' && n==='"'){cell+='"';i++}
+      else if(c==='"') q=false;
+      else cell+=c;
+    } else {
+      if(c==='"') q=true;
+      else if(c===','){row.push(cell);cell=""}
+      else if(c==='\n'){row.push(cell);rows.push(row);row=[];cell=""}
+      else if(c!=='\r') cell+=c;
     }
-    cell += ch;
   }
-  if (cell || row.length) { row.push(cell); rows.push(row); }
+  row.push(cell); if(row.some(x=>x!=="")) rows.push(row);
   return rows;
 }
-async function fetchSheet(sheet) {
-  const url="https://docs.google.com/spreadsheets/d/"+SHEET_ID+"/gviz/tq?tqx=out:csv&sheet="+encodeURIComponent(sheet)+"&t="+Date.now();
-  const r=await fetch(url,{headers:{"user-agent":"Bahor97-CRM/2.0"},signal:AbortSignal.timeout(12000)});
-  if(!r.ok) throw new Error("Google Sheet HTTP "+r.status);
-  return parseCsv(await r.text());
+async function clients(){
+  const url=`https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent("КЛИЕНТЫ")}`;
+  const r=await fetch(url,{headers:{"user-agent":"Bahor97CRM/2"}});
+  if(!r.ok) throw new Error("Google Sheets "+r.status);
+  const rows=csvParse(await r.text());
+  const h=rows.findIndex(r=>String(r[0]||"").trim()==="№");
+  return rows.slice(h>=0?h+1:1).filter(r=>r.some(x=>String(x||"").trim())).map(r=>({
+    num:r[0]||"",name:r[1]||"",contract:r[2]||"",floor:r[3]||"",area:r[4]||"",
+    currency:r[5]||"",price:r[6]||"",total:r[7]||"",passport:r[8]||"",rma:r[9]||"",
+    phone:r[10]||"",payments:r[11]||"",control:r[12]||""
+  })).filter(x=>x.num||x.name);
 }
-function clientFromRow(r) {
-  return {num:r[0]||"",name:r[1]||"",contract:r[2]||"",floor:r[3]||"",area:r[4]||"",currency:r[5]||"",price:r[6]||"",total:r[7]||"",passport:r[8]||"",rma:r[9]||"",phone:r[10]||"",payments:r[11]||"",status:r[12]||""};
+async function auth(c:any){
+  const raw=getCookie(c,"b97v2");
+  if(!raw) return false;
+  const q=await pool.query("SELECT username,expires_at FROM b97v2_sessions WHERE token_hash=$1",[sha(raw)]);
+  if(!q.rows.length || Number(q.rows[0].expires_at)<Date.now()) return false;
+  return q.rows[0].username;
 }
-function parseDetail(rows, clientNum) {
-  const header=rows.findIndex(r=>String(r[0]||"").trim()==="Дата");
-  const top=header<0?rows:rows.slice(0,header), info=[], control=[];
-  for (const r of top) {
-    if(r[0]&&r[1]) info.push({label:String(r[0]).trim(),value:String(r[1]).trim()});
-    if(r[3]&&r[4]) info.push({label:String(r[3]).trim(),value:String(r[4]).trim()});
-    if(r[7]&&r[8]&&String(r[7]).trim()!=="КОНТРОЛЬ") control.push({label:String(r[7]).trim(),value:String(r[8]).trim()});
-  }
-  const payments=[];
-  if(header>=0) rows.slice(header+1).forEach((r,index)=>{
-    if(!r.some(v=>String(v||"").trim())) return;
-    if(String(r[0]||"").trim()==="НОВЫЕ ПЛАТЕЖИ — ВНОСИТЬ НИЖЕ") return;
-    payments.push({id:"b:"+clientNum+":"+index,baseIndex:index,date:r[0]||"",usd:r[1]||"",rate:r[2]||"",tjs:r[3]||"",note:r[4]||"",check:r[5]||""});
-  });
-  return {info,control,payments};
-}
-function requestMeta(c) {
-  const h=(n)=>c.req.header(n)||"";
-  const ip=(h("x-forwarded-for").split(",")[0]||h("x-real-ip")||"").trim();
-  const ua=h("user-agent").slice(0,220);
-  const country=h("cf-ipcountry")||h("x-vercel-ip-country")||"";
-  const city=h("cf-ipcity")||"";
-  return {ip,ua,country,city};
-}
-function sameOrigin(c) {
-  const origin=c.req.header("origin");
-  if(!origin) return true;
-  try {
-    const o=new URL(origin);
-    const forwardedHost=(c.req.header("x-forwarded-host")||c.req.header("host")||"").split(",")[0].trim();
-    if(forwardedHost && o.host===forwardedHost) return true;
-    const requestUrl=new URL(c.req.url);
-    return o.host===requestUrl.host;
-  } catch { return false; }
+async function needAuth(c:any,next:any){
+  const u=await auth(c); if(!u) return c.json({error:"auth"},{status:401});
+  c.set("user",u); await next();
 }
 
-async function initDb() {
-  await pool.query("CREATE TABLE IF NOT EXISTS b97_users(username TEXT PRIMARY KEY,salt TEXT NOT NULL,hash TEXT NOT NULL,role TEXT NOT NULL CHECK(role IN ('developer','viewer')),active BOOLEAN NOT NULL DEFAULT TRUE,created_at BIGINT NOT NULL)");
-  await pool.query("CREATE TABLE IF NOT EXISTS b97_google_users(email TEXT PRIMARY KEY,role TEXT NOT NULL CHECK(role IN ('developer','viewer')),active BOOLEAN NOT NULL DEFAULT TRUE,created_at BIGINT NOT NULL)");
-  await pool.query("INSERT INTO b97_google_users(email,role,active,created_at) VALUES($1,'developer',TRUE,$2) ON CONFLICT(email) DO NOTHING",[OWNER_GOOGLE_EMAIL,Date.now()]);
-  await pool.query("CREATE TABLE IF NOT EXISTS b97_sessions(token_hash TEXT PRIMARY KEY,username TEXT NOT NULL,role TEXT NOT NULL,expires_at BIGINT NOT NULL,last_seen BIGINT NOT NULL,ip TEXT,ua TEXT,country TEXT,city TEXT)");
-  await pool.query("CREATE TABLE IF NOT EXISTS b97_login_attempts(k TEXT PRIMARY KEY,failures INTEGER NOT NULL,lock_until BIGINT NOT NULL)");
-  await pool.query("CREATE TABLE IF NOT EXISTS b97_payment_overrides(id TEXT PRIMARY KEY,client_num TEXT NOT NULL,date TEXT,usd TEXT,rate TEXT,tjs TEXT,note TEXT,check_text TEXT,deleted BOOLEAN NOT NULL DEFAULT FALSE,updated_by TEXT,updated_at BIGINT NOT NULL)");
-  await pool.query("CREATE TABLE IF NOT EXISTS b97_activity(id TEXT PRIMARY KEY,username TEXT,action TEXT NOT NULL,detail TEXT,at BIGINT NOT NULL,ip TEXT,ua TEXT,country TEXT,city TEXT)");
-  await pool.query("CREATE TABLE IF NOT EXISTS b97_setup(id INTEGER PRIMARY KEY,token_hash TEXT NOT NULL,expires_at BIGINT NOT NULL)");
-  await pool.query("DELETE FROM b97_sessions WHERE expires_at < $1",[Date.now()]);
-  const u=await pool.query("SELECT COUNT(*)::int n FROM b97_users");
-  if(u.rows[0].n===0) {
-    const existing=await pool.query("SELECT expires_at FROM b97_setup WHERE id=1");
-    if(!existing.rows.length || Number(existing.rows[0].expires_at)<Date.now()) {
-      const token=randomBytes(24).toString("hex");
-      await pool.query("INSERT INTO b97_setup(id,token_hash,expires_at) VALUES(1,$1,$2) ON CONFLICT(id) DO UPDATE SET token_hash=EXCLUDED.token_hash,expires_at=EXCLUDED.expires_at",[sha(token),Date.now()+60*60*1000]);
-      const domain=process.env.RAILWAY_PUBLIC_DOMAIN||"bahor97-live-production.up.railway.app";
-      console.log("B97_SETUP_URL=https://"+domain+"/setup?t="+token);
-    }
-  } else {
-    await pool.query("DELETE FROM b97_setup");
-  }
-  console.log("B97_READY");
-}
-async function audit(c,user,action,detail="") {
-  const m=requestMeta(c);
-  await pool.query("INSERT INTO b97_activity(id,username,action,detail,at,ip,ua,country,city) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)",[randomUUID(),user?.username||null,action,String(detail).slice(0,500),Date.now(),m.ip,m.ua,m.country,m.city]).catch(()=>{});
-}
-async function auth(c) {
-  const raw=getCookie(c,"b97_session"); if(!raw) return null;
-  const q=await pool.query("SELECT username,role,expires_at FROM b97_sessions WHERE token_hash=$1",[sha(raw)]);
-  if(!q.rows.length || Number(q.rows[0].expires_at)<Date.now()) return null;
-  const username=q.rows[0].username, role=q.rows[0].role;
-  if(username.toLowerCase()!==ADMIN_USER.toLowerCase()) {
-    const u=await pool.query("SELECT active FROM b97_users WHERE username=$1",[username.toLowerCase()]);
-    if(!u.rows.length || !u.rows[0].active) return null;
-  }
-  const m=requestMeta(c);
-  await pool.query("UPDATE b97_sessions SET last_seen=$1,ip=$2,ua=$3,country=$4,city=$5 WHERE token_hash=$6",[Date.now(),m.ip,m.ua,m.country,m.city,sha(raw)]).catch(()=>{});
-  return {username,role};
-}
-async function requireAuth(c,next) {
-  const u=await auth(c); if(!u) return c.json({error:"auth"},{status:401}); c.set("user",u); await next();
-}
-async function requireDeveloper(c,next) {
-  const u=await auth(c); if(!u) return c.json({error:"auth"},{status:401}); if(u.role!=="developer") return c.json({error:"forbidden"},{status:403}); c.set("user",u); await next();
-}
+const page=`<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Bahor-97 CRM</title>
+<style>
+:root{--bg:#071217;--panel:#0c1c23e8;--line:#24404a;--text:#eff6f4;--muted:#8ea1a7;--gold:#d4a85c;--green:#60c493;--red:#df7569}
+*{box-sizing:border-box}body{margin:0;font-family:Inter,system-ui,Arial;background:radial-gradient(circle at 80% 0,#15313c 0,transparent 35%),linear-gradient(135deg,#061116,#0a1a21 55%,#071217);color:var(--text);min-height:100vh}
+body:before{content:"";position:fixed;inset:0;pointer-events:none;background-image:linear-gradient(#ffffff05 1px,transparent 1px),linear-gradient(90deg,#ffffff05 1px,transparent 1px);background-size:36px 36px}
+.hidden{display:none!important}.glass{background:var(--panel);border:1px solid var(--line);box-shadow:0 24px 80px #0008;backdrop-filter:blur(18px)}
+.login{min-height:100vh;display:grid;place-items:center;padding:24px}.login-card{width:min(460px,94vw);padding:36px;border-radius:24px;position:relative;overflow:hidden}.login-card:before{content:"";position:absolute;right:-35px;top:-20px;width:180px;height:180px;border:1px solid #d4a85c33;transform:rotate(45deg)}
+.logo{display:flex;align-items:center;gap:12px}.mark{width:52px;height:52px;border:1px solid #d4a85c88;border-radius:15px;display:grid;place-items:center;color:var(--gold);font-weight:900}.logo b{letter-spacing:.08em}.logo small{display:block;color:var(--muted);font-size:9px;margin-top:4px}.ey{margin-top:32px;color:var(--gold);font-size:10px;letter-spacing:.22em;font-weight:800}.login h1{font-size:38px;line-height:1.05;margin:12px 0}.login p{color:var(--muted);line-height:1.55}.field{display:block;margin-top:15px;font-size:10px;letter-spacing:.12em;color:#a5b5ba}.field input{width:100%;margin-top:7px;padding:14px;border:1px solid var(--line);border-radius:12px;background:#071319;color:white;outline:none}.field input:focus{border-color:#d4a85c88}.primary{width:100%;margin-top:20px;padding:14px;border:0;border-radius:12px;background:var(--gold);color:#101a1f;font-weight:900;cursor:pointer}.err{min-height:22px;color:#ff9a8d;margin-top:10px;font-size:13px}
+.app{display:grid;grid-template-columns:240px 1fr;min-height:100vh;position:relative}.side{padding:24px;border-right:1px solid var(--line);background:#07151ae8}.side .logo{margin-bottom:38px}.nav{display:block;width:100%;text-align:left;padding:12px 14px;margin:7px 0;border:1px solid transparent;border-radius:12px;background:transparent;color:#b8c5c9;cursor:pointer}.nav.active{background:#10262e;border-color:#28444f;color:white}.side-foot{position:fixed;bottom:20px;left:20px;width:200px}.logout{width:100%;padding:10px;border:1px solid var(--line);border-radius:10px;background:transparent;color:#c7d2d5;cursor:pointer}
+.main{padding:32px 36px}.top{display:flex;justify-content:space-between;gap:20px;align-items:flex-start}.top h1{margin:5px 0 0;font-size:32px}.sync{color:var(--muted);font-size:12px;margin-top:8px}.refresh{padding:11px 14px;border-radius:10px;border:1px solid var(--line);background:#0b1c22;color:white;cursor:pointer}
+.cards{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:24px}.card{padding:20px;border-radius:16px}.card small{color:var(--muted);font-size:10px;letter-spacing:.13em}.card strong{display:block;font-size:31px;margin:8px 0 2px}.card span{font-size:12px;color:#90a4aa}
+.panel{margin-top:16px;padding:20px;border-radius:18px}.tools{display:flex;justify-content:space-between;gap:14px;align-items:center;margin-bottom:14px}.tools h2{margin:0;font-size:19px}.search{width:min(430px,55vw);padding:11px 13px;border:1px solid var(--line);border-radius:10px;background:#071319;color:white}
+table{width:100%;border-collapse:collapse}th,td{padding:12px 10px;border-bottom:1px solid #203740;text-align:left;font-size:13px}th{font-size:10px;color:#789097;letter-spacing:.12em}.row{cursor:pointer}.row:hover{background:#ffffff05}.badge{display:inline-flex;padding:5px 8px;border-radius:999px;background:#15362a;color:#85d9ad;font-size:11px}.badge.warn{background:#3a2421;color:#ef9b8d}
+.modal-bg{position:fixed;inset:0;background:#000a;display:grid;place-items:center;padding:20px;z-index:50}.modal{width:min(760px,95vw);max-height:86vh;overflow:auto;border-radius:20px;padding:24px}.modal-head{display:flex;justify-content:space-between;gap:20px}.x{border:0;background:transparent;color:white;font-size:25px;cursor:pointer}.grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-top:18px}.info{padding:12px;border:1px solid var(--line);border-radius:12px;background:#071319}.info small{display:block;color:var(--muted);font-size:10px;margin-bottom:5px}.info b{font-size:14px}
+@media(max-width:850px){.app{grid-template-columns:1fr}.side{display:none}.main{padding:20px}.cards{grid-template-columns:1fr}.table-wrap{overflow:auto}.top{align-items:center}.grid{grid-template-columns:1fr}}
+</style></head><body>
+<section id="login" class="login">
+  <div class="login-card glass">
+    <div class="logo"><div class="mark">Б97</div><div><b>ЧДММ «БАХОР-97»</b><small>PRIVATE CONSTRUCTION CRM · V2</small></div></div>
+    <div class="ey">ЗАКРЫТАЯ СИСТЕМА</div><h1>Управление стройкой<br>в одном месте.</h1>
+    <p>Клиенты, договоры, площади и контроль базы без лишних экранов.</p>
+    <form id="form"><label class="field">ЛОГИН<input id="user" value="Developer" autocomplete="username"></label><label class="field">ПАРОЛЬ<input id="pass" type="password" autocomplete="current-password"></label><button class="primary">ВОЙТИ</button><div id="err" class="err"></div></form>
+  </div>
+</section>
+<section id="app" class="app hidden">
+  <aside class="side"><div class="logo"><div class="mark">Б97</div><div><b>БАХОР-97</b><small>CRM V2</small></div></div><button class="nav active">Обзор</button><button class="nav">Клиенты</button><div class="side-foot"><button id="logout" class="logout">Выйти</button></div></aside>
+  <main class="main"><div class="top"><div><div class="ey" style="margin:0">БАЗА ДОГОВОРОВ</div><h1>Панель управления</h1><div id="sync" class="sync">Загрузка данных…</div></div><button id="refresh" class="refresh">↻ Обновить</button></div>
+  <section class="cards"><div class="card glass"><small>КЛИЕНТЫ</small><strong id="mc">—</strong><span>договоров</span></div><div class="card glass"><small>ПЛОЩАДЬ</small><strong id="ma">—</strong><span>м² всего</span></div><div class="card glass"><small>КОНТРОЛЬ</small><strong id="mw">—</strong><span>требуют внимания</span></div></section>
+  <section class="panel glass"><div class="tools"><h2>Клиенты</h2><input id="search" class="search" placeholder="ФИО, договор, телефон…"></div><div class="table-wrap"><table><thead><tr><th>КЛИЕНТ</th><th>ДОГОВОР</th><th>ЭТАЖ</th><th>ПЛОЩАДЬ</th><th>СТОИМОСТЬ</th><th>КОНТРОЛЬ</th></tr></thead><tbody id="rows"></tbody></table></div></section>
+  </main>
+</section>
+<div id="modal" class="modal-bg hidden"><div class="modal glass"><div class="modal-head"><div><div class="ey" style="margin:0">КАРТОЧКА КЛИЕНТА</div><h2 id="mn"></h2></div><button id="close" class="x">×</button></div><div id="mg" class="grid"></div></div></div>
+<script>
+const $=s=>document.querySelector(s); let data=[];
+const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
+async function api(url,opt={}){const r=await fetch(url,{headers:{"content-type":"application/json"},...opt});const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||"Ошибка");return j}
+async function boot(){try{await api("/api/session");showApp();load()}catch{}}
+function showApp(){$("#login").classList.add("hidden");$("#app").classList.remove("hidden")}
+$("#form").onsubmit=async e=>{e.preventDefault();$("#err").textContent="";try{await api("/api/login",{method:"POST",body:JSON.stringify({username:$("#user").value,password:$("#pass").value})});showApp();load()}catch(x){$("#err").textContent=x.message}}
+$("#logout").onclick=async()=>{try{await api("/api/logout",{method:"POST"})}catch{}location.reload()}
+$("#refresh").onclick=load; $("#search").oninput=render;
+function warn(c){return /провер|долг|ошиб|вним/i.test(c.control||"")}
+async function load(){try{const r=await api("/api/clients");data=r.clients;$("#sync").textContent="Синхронизировано: "+new Date().toLocaleString("ru-RU");$("#mc").textContent=data.length;$("#ma").textContent=new Intl.NumberFormat("ru-RU",{maximumFractionDigits:1}).format(data.reduce((s,c)=>s+(parseFloat(String(c.area).replace(",","."))||0),0));$("#mw").textContent=data.filter(warn).length;render()}catch(e){$("#sync").textContent=e.message}}
+function render(){const q=$("#search").value.toLowerCase();const a=data.filter(c=>!q||[c.name,c.contract,c.phone,c.rma].join(" ").toLowerCase().includes(q));$("#rows").innerHTML=a.map(c=>`<tr class="row" data-n="${esc(c.num)}"><td><b>${esc(c.name||"—")}</b><br><small>${esc(c.phone||"")}</small></td><td>${esc(c.contract||"—")}</td><td>${esc(c.floor||"—")}</td><td>${esc(c.area||"—")} м²</td><td>${esc(c.total||"—")} ${esc(c.currency||"")}</td><td><span class="badge ${warn(c)?"warn":""}">${esc(c.control||"Внесено")}</span></td></tr>`).join("");document.querySelectorAll(".row").forEach(r=>r.onclick=()=>openCard(r.dataset.n))}
+function openCard(n){const c=data.find(x=>String(x.num)===String(n));if(!c)return;$("#mn").textContent=c.name||"Клиент";const fields=[["№",c.num],["Договор",c.contract],["Этаж",c.floor],["Площадь",c.area?c.area+" м²":""],["Валюта",c.currency],["Цена / м²",c.price],["Стоимость",c.total],["Паспорт",c.passport],["РМА / ИНН",c.rma],["Телефон",c.phone],["Платежи",c.payments],["Контроль",c.control]];$("#mg").innerHTML=fields.filter(x=>x[1]).map(x=>`<div class="info"><small>${esc(x[0])}</small><b>${esc(x[1])}</b></div>`).join("");$("#modal").classList.remove("hidden")}
+$("#close").onclick=()=>$("#modal").classList.add("hidden");$("#modal").onclick=e=>{if(e.target.id==="modal")$("#modal").classList.add("hidden")}
+boot();
+</script></body></html>`;
 
-app.use("*",async(c,next)=>{
-  await next();
-  c.header("X-Content-Type-Options","nosniff");
-  c.header("X-Frame-Options","DENY");
-  c.header("Referrer-Policy","no-referrer");
-  c.header("Permissions-Policy","camera=(), microphone=(), geolocation=()");
-  c.header("Strict-Transport-Security","max-age=31536000; includeSubDomains");
-  c.header("Content-Security-Policy","default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'");
-  if(c.req.path.startsWith("/api/")||c.req.path.startsWith("/setup")) c.header("Cache-Control","no-store");
-});
-
-app.get("/health",c=>c.json({ok:true}));
-app.get("/api/health",c=>c.json({ok:true}));
-app.get("/styles.css",c=>{c.header("Content-Type","text/css; charset=utf-8");c.header("Cache-Control","no-store");return c.body(CSS)});
-app.get("/app.js",c=>{c.header("Content-Type","application/javascript; charset=utf-8");c.header("Cache-Control","no-store");return c.body(JS)});
-app.get("/",c=>{c.header("Cache-Control","no-store");c.header("X-B97-Version","2026-09-22-v3");return c.html(HTML)});
-
+app.use("*",async(c,next)=>{await next();c.header("X-Content-Type-Options","nosniff");c.header("X-Frame-Options","DENY");c.header("Referrer-Policy","no-referrer");c.header("Cache-Control","no-store")});
+app.get("/health",c=>c.json({ok:true,version:2}));
+app.get("/",c=>c.html(page));
 app.get("/setup",c=>c.redirect("/"));
-app.post("/api/setup",c=>c.json({error:"Первичная настройка не требуется"},{status:410}));
-
-app.get("/auth/google",c=>c.redirect("/"));
-app.get("/auth/google/callback",c=>c.redirect("/"));
-
+app.get("/api/session",async c=>{const u=await auth(c);return u?c.json({username:u,role:"developer"}):c.json({error:"auth"},{status:401})});
 app.post("/api/login",async c=>{
   const b=await c.req.json().catch(()=>({}));
-  const username=String(b.username||"").trim();
-  const password=String(b.password||"");
-  const m=requestMeta(c), now=Date.now(), key=(m.ip||"unknown")+"|"+username.toLowerCase();
+  const username=String(b.username||"").trim(), password=String(b.password||"");
+  if(username.toLowerCase()!==ADMIN_USER.toLowerCase() || !ADMIN_PASSWORD || password!==ADMIN_PASSWORD) return c.json({error:"Неверный логин или пароль"},{status:401});
+  const raw=randomBytes(32).toString("base64url"), now=Date.now();
+  await pool.query("INSERT INTO b97v2_sessions(token_hash,username,expires_at,created_at) VALUES($1,$2,$3,$4)",[sha(raw),ADMIN_USER,now+SESSION_MS,now]);
+  setCookie(c,"b97v2",raw,{httpOnly:true,secure:true,sameSite:"Strict",path:"/",maxAge:SESSION_MS/1000});
+  return c.json({ok:true});
+});
+app.post("/api/logout",async c=>{const raw=getCookie(c,"b97v2");if(raw)await pool.query("DELETE FROM b97v2_sessions WHERE token_hash=$1",[sha(raw)]);deleteCookie(c,"b97v2",{path:"/"});return c.json({ok:true})});
+app.get("/api/clients",needAuth,async c=>{try{return c.json({clients:await clients()})}catch(e:any){return c.json({error:"Не удалось загрузить Google Таблицу",detail:String(e?.message||e)},{status:502})}});
 
-  const a=await pool.query("SELECT failures,lock_until FROM b97_login_attempts WHERE k=$1",[key]);
-  if(a.rows.length&&Number(a.rows[0].lock_until)>now&&a.rows[0].failures>=MAX_FAILS) return c.json({error:"Слишком много попыток. Подождите 15 минут."},{status:429});
-
-  let role=null, canonical=username;
-  if(ADMIN_PASSWORD && username.toLowerCase()===ADMIN_USER.toLowerCase() && password===ADMIN_PASSWORD) {
-    role="developer"; canonical=ADMIN_USER;
-  } else {
-    const q=await pool.query("SELECT * FROM b97_users WHERE username=$1 AND active=TRUE",[username.toLowerCase()]);
-    if(q.rows.length && verifyPassword(password,q.rows[0])) { role=q.rows[0].role; canonical=q.rows[0].username; }
-  }
-
-  if(!role) {
-    const failures=a.rows.length&&Number(a.rows[0].lock_until)>now?a.rows[0].failures+1:1;
-    const until=a.rows.length&&Number(a.rows[0].lock_until)>now?Number(a.rows[0].lock_until):now+LOCK_MS;
-    await pool.query("INSERT INTO b97_login_attempts(k,failures,lock_until) VALUES($1,$2,$3) ON CONFLICT(k) DO UPDATE SET failures=EXCLUDED.failures,lock_until=EXCLUDED.lock_until",[key,failures,until]);
-    return c.json({error:"Неверный логин или пароль"},{status:401});
-  }
-
-  await pool.query("DELETE FROM b97_login_attempts WHERE k=$1",[key]);
-  const raw=randomBytes(32).toString("base64url");
-  await pool.query("INSERT INTO b97_sessions(token_hash,username,role,expires_at,last_seen,ip,ua,country,city) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)",[sha(raw),canonical,role,now+SESSION_MS,now,m.ip,m.ua,m.country,m.city]);
-  setCookie(c,"b97_session",raw,{httpOnly:true,secure:true,sameSite:"Strict",path:"/",maxAge:Math.floor(SESSION_MS/1000)});
-  const u={username:canonical,role}; await audit(c,u,"login","Вход в систему");
-  return c.json(u);
-});
-app.get("/api/session",async c=>{const u=await auth(c);return u?c.json(u):c.json({authenticated:false},{status:401})});
-app.post("/api/logout",async c=>{
-  if(!sameOrigin(c)) return c.json({error:"forbidden"},{status:403});
-  const u=await auth(c), raw=getCookie(c,"b97_session");
-  if(raw) await pool.query("DELETE FROM b97_sessions WHERE token_hash=$1",[sha(raw)]);
-  if(u) await audit(c,u,"logout","Выход из системы");
-  deleteCookie(c,"b97_session",{path:"/"}); return c.json({ok:true});
-});
-
-app.get("/api/clients",requireAuth,async c=>{
-  try {
-    const rows=await fetchSheet("КЛИЕНТЫ");
-    const hi=rows.findIndex(r=>String(r[0]||"").trim()==="№"), start=hi>=0?hi+1:1;
-    const clients=rows.slice(start).map(clientFromRow).filter(x=>x.num||x.name);
-    return c.json({clients,syncedAt:new Date().toISOString()});
-  } catch(e) { return c.json({error:"Не удалось прочитать Google Таблицу",detail:String(e?.message||e)},{status:502}); }
-});
-app.get("/api/client/:num",requireAuth,async c=>{
-  const num=String(c.req.param("num")), sheet=clientSheets[num]; if(!sheet) return c.json({error:"Клиент не найден"},{status:404});
-  try {
-    const rows=await fetchSheet(sheet), detail=parseDetail(rows,num);
-    const q=await pool.query("SELECT * FROM b97_payment_overrides WHERE client_num=$1 ORDER BY updated_at",[num]);
-    const map=new Map(q.rows.map(x=>[x.id,x])), merged=[];
-    for(const p of detail.payments){const o=map.get(p.id);if(o?.deleted)continue;merged.push(o?{...p,date:o.date||"",usd:o.usd||"",rate:o.rate||"",tjs:o.tjs||"",note:o.note||"",check:o.check_text||""}:p)}
-    for(const o of q.rows)if(String(o.id).startsWith("n:"+num+":")&&!o.deleted)merged.push({id:o.id,baseIndex:null,date:o.date||"",usd:o.usd||"",rate:o.rate||"",tjs:o.tjs||"",note:o.note||"",check:o.check_text||""});
-    detail.payments=merged; const u=c.get("user"); await audit(c,u,"open_client",num);
-    return c.json({sheet,...detail});
-  } catch(e) { return c.json({error:"Не удалось прочитать карточку клиента",detail:String(e?.message||e)},{status:502}); }
-});
-app.post("/api/payments",requireDeveloper,async c=>{
-  if(!sameOrigin(c)) return c.json({error:"forbidden"},{status:403});
-  const b=await c.req.json().catch(()=>({})), clientNum=String(b.clientNum||""); if(!clientSheets[clientNum]) return c.json({error:"Некорректный клиент"},{status:400});
-  const id=String(b.id||("n:"+clientNum+":"+randomUUID())), val=(x,n)=>String(x||"").slice(0,n);
-  const u=c.get("user");
-  await pool.query("INSERT INTO b97_payment_overrides(id,client_num,date,usd,rate,tjs,note,check_text,deleted,updated_by,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT(id) DO UPDATE SET date=EXCLUDED.date,usd=EXCLUDED.usd,rate=EXCLUDED.rate,tjs=EXCLUDED.tjs,note=EXCLUDED.note,check_text=EXCLUDED.check_text,deleted=EXCLUDED.deleted,updated_by=EXCLUDED.updated_by,updated_at=EXCLUDED.updated_at",[id,clientNum,val(b.date,40),val(b.usd,80),val(b.rate,80),val(b.tjs,80),val(b.note,500),val(b.check,500),b.deleted===true,u.username,Date.now()]);
-  await audit(c,u,b.deleted?"delete_payment":"save_payment",clientNum+" / "+id); return c.json({ok:true,id});
-});
-
-app.get("/api/admin/users",requireDeveloper,async c=>{
-  const q=await pool.query("SELECT u.username,u.role,u.active,u.created_at,MAX(s.last_seen) last_seen FROM b97_users u LEFT JOIN b97_sessions s ON s.username=u.username GROUP BY u.username,u.role,u.active,u.created_at ORDER BY u.created_at");
-  const users=[{username:ADMIN_USER,role:"developer",active:true,protected:true,lastSeen:null},...q.rows.map(x=>({username:x.username,role:x.role,active:x.active,protected:false,lastSeen:x.last_seen?Number(x.last_seen):null}))];
-  return c.json({users});
-});
-app.post("/api/admin/users",requireDeveloper,async c=>{
-  if(!sameOrigin(c)) return c.json({error:"forbidden"},{status:403});
-  const b=await c.req.json().catch(()=>({})), username=String(b.username||"").trim().toLowerCase(), password=String(b.password||""), role=b.role==="developer"?"developer":"viewer";
-  if(!/^[a-z0-9_.-]{3,40}$/.test(username)) return c.json({error:"Логин: 3–40 символов, латиница/цифры"},{status:400});
-  if(password.length<8||password.length>160) return c.json({error:"Пароль минимум 8 символов"},{status:400});
-  if(username===ADMIN_USER.toLowerCase()) return c.json({error:"Этот логин зарезервирован"},{status:409});
-  const hp=hashPassword(password);
-  try { await pool.query("INSERT INTO b97_users(username,salt,hash,role,active,created_at) VALUES($1,$2,$3,$4,TRUE,$5)",[username,hp.salt,hp.hash,role,Date.now()]); }
-  catch { return c.json({error:"Такой логин уже существует"},{status:409}); }
-  const u=c.get("user"); await audit(c,u,"create_user",username+" / "+role); return c.json({ok:true});
-});
-app.patch("/api/admin/users/:username",requireDeveloper,async c=>{
-  if(!sameOrigin(c)) return c.json({error:"forbidden"},{status:403});
-  const username=String(c.req.param("username")).toLowerCase(), u=c.get("user");
-  if(username===ADMIN_USER.toLowerCase() || username===u.username.toLowerCase()) return c.json({error:"Основной аккаунт отключить нельзя"},{status:400});
-  const b=await c.req.json().catch(()=>({})), active=b.active===true;
-  await pool.query("UPDATE b97_users SET active=$1 WHERE username=$2",[active,username]); if(!active) await pool.query("DELETE FROM b97_sessions WHERE username=$1",[username]);
-  await audit(c,u,active?"enable_user":"disable_user",username); return c.json({ok:true});
-});
-app.get("/api/admin/activity",requireDeveloper,async c=>{
-  const q=await pool.query("SELECT username,action,detail,at,ua,country,city FROM b97_activity ORDER BY at DESC LIMIT 200");
-  return c.json({activity:q.rows.map(x=>({...x,at:new Date(Number(x.at)).toISOString()}))});
-});
-
-await initDb();
 export default app;
