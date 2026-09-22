@@ -169,7 +169,6 @@ app.get("/auth/google",c=>c.redirect("/"));
 app.get("/auth/google/callback",c=>c.redirect("/"));
 
 app.post("/api/login",async c=>{
-  if(!sameOrigin(c)) return c.json({error:"Запрещено"},{status:403});
   const b=await c.req.json().catch(()=>({}));
   const username=String(b.username||"").trim();
   const password=String(b.password||"");
